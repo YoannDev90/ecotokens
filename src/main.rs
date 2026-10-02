@@ -55,7 +55,7 @@ enum Commands {
     HookQwen,
     /// Intercept a native Claude Code tool result via PostToolUse hook (reads JSON from stdin)
     HookPost {
-        /// Harness that triggered this hook (claude, pi). Default: claude
+        /// Harness that triggered this hook (claude, pi, opencode). Default: claude
         #[arg(long, default_value = "claude")]
         agent: String,
     },
@@ -83,7 +83,7 @@ enum Commands {
         /// Working directory for git root detection (used by Pi extension)
         #[arg(long)]
         cwd: Option<PathBuf>,
-        /// Harness that triggered this filter (claude, gemini, qwen, pi, cli). Default: cli
+        /// Harness that triggered this filter (claude, gemini, qwen, pi, opencode, cli). Default: cli
         #[arg(long, default_value = "cli")]
         agent: String,
     },
@@ -136,9 +136,9 @@ enum Commands {
         #[arg(long, default_value_t, value_name = "PERIOD")]
         period: metrics::report::Period,
     },
-    /// Install ecotokens hook in ~/.claude/settings.json, ~/.gemini/settings.json, ~/.qwen/settings.json, ~/.pi/agent/extensions/, ~/.hermes/plugins/, or ~/.codex/plugins/
+    /// Install ecotokens hook in ~/.claude/settings.json, ~/.gemini/settings.json, ~/.qwen/settings.json, ~/.pi/agent/extensions/, ~/.hermes/plugins/, ~/.codex/plugins/, or ~/.config/opencode/plugins/
     Install {
-        /// Target AI tool to install for: claude, gemini, qwen, pi, hermes, codex, or all (default: claude)
+        /// Target AI tool to install for: claude, gemini, qwen, pi, hermes, codex, opencode, or all (default: claude)
         #[arg(long, default_value = "claude")]
         target: String,
         /// Enable AI-powered output summarization via Ollama
@@ -151,9 +151,9 @@ enum Commands {
         #[arg(long)]
         enable_plugin: bool,
     },
-    /// Remove ecotokens hook from ~/.claude/settings.json, ~/.gemini/settings.json, ~/.qwen/settings.json, ~/.pi/agent/extensions/, ~/.hermes/plugins/, or ~/.codex/plugins/
+    /// Remove ecotokens hook from ~/.claude/settings.json, ~/.gemini/settings.json, ~/.qwen/settings.json, ~/.pi/agent/extensions/, ~/.hermes/plugins/, ~/.codex/plugins/, or ~/.config/opencode/plugins/
     Uninstall {
-        /// Target to uninstall from: claude, gemini, qwen, pi, hermes, codex, or all (default: claude)
+        /// Target to uninstall from: claude, gemini, qwen, pi, hermes, codex, opencode, or all (default: claude)
         #[arg(long, default_value = "claude")]
         target: String,
     },
@@ -1117,6 +1117,7 @@ fn cmd_install(
     let install_pi = matches!(target.as_str(), "pi" | "all");
     let install_hermes = matches!(target.as_str(), "hermes" | "all");
     let install_codex = matches!(target.as_str(), "codex" | "all");
+    let install_opencode = matches!(target.as_str(), "opencode" | "all");
 
     if !install_claude
         && !install_gemini
@@ -1124,9 +1125,10 @@ fn cmd_install(
         && !install_pi
         && !install_hermes
         && !install_codex
+        && !install_opencode
     {
         eprintln!(
-            "unknown target '{}'. Valid values: claude, gemini, qwen, pi, hermes, codex, all",
+            "unknown target '{}'. Valid values: claude, gemini, qwen, pi, hermes, codex, opencode, all",
             target
         );
         std::process::exit(1);
@@ -1400,6 +1402,26 @@ fn cmd_install(
         }
     }
 
+    if install_opencode {
+        print_install_section(&mut first_section, "Install OpenCode");
+        match install::default_opencode_plugin_path() {
+            Some(ref p) => match install::install_opencode_plugin(p) {
+                Ok(()) => {
+                    print_install_item("ok", "plugin", p);
+                    print_install_note("restart OpenCode to load the plugin");
+                }
+                Err(e) => {
+                    eprintln!("install error (opencode): {e}");
+                    std::process::exit(1);
+                }
+            },
+            None => {
+                eprintln!("cannot determine OpenCode plugin path on this system");
+                std::process::exit(1);
+            }
+        }
+    }
+
     post_install_completions(&mut first_section);
 
     let enable_ai = ai_summary || ai_summary_model.is_some();
@@ -1432,6 +1454,7 @@ fn cmd_uninstall(target: String) {
     let uninstall_pi = matches!(target.as_str(), "pi" | "all");
     let uninstall_hermes = matches!(target.as_str(), "hermes" | "all");
     let uninstall_codex = matches!(target.as_str(), "codex" | "all");
+    let uninstall_opencode = matches!(target.as_str(), "opencode" | "all");
 
     if !uninstall_claude
         && !uninstall_gemini
@@ -1439,9 +1462,10 @@ fn cmd_uninstall(target: String) {
         && !uninstall_pi
         && !uninstall_hermes
         && !uninstall_codex
+        && !uninstall_opencode
     {
         eprintln!(
-            "unknown target '{}'. Valid values: claude, gemini, qwen, pi, hermes, codex, all",
+            "unknown target '{}'. Valid values: claude, gemini, qwen, pi, hermes, codex, opencode, all",
             target
         );
         std::process::exit(1);
@@ -1712,6 +1736,32 @@ fn cmd_uninstall(target: String) {
         }
         if !had_plugin && !had_hook && !had_post && !had_mcp {
             print_install_note("nothing to uninstall");
+        }
+    }
+
+    if uninstall_opencode {
+        print_install_section(&mut first_section, "Uninstall OpenCode");
+        match install::default_opencode_plugin_path() {
+            Some(ref p) => {
+                let had = install::is_opencode_plugin_installed(p);
+                match install::uninstall_opencode_plugin(p) {
+                    Ok(()) => {
+                        if had {
+                            print_install_item("removed", "plugin", p);
+                        } else {
+                            print_install_note("nothing to uninstall");
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("uninstall error (opencode): {e}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+            None => {
+                eprintln!("cannot determine OpenCode plugin path on this system");
+                std::process::exit(1);
+            }
         }
     }
 
