@@ -26,6 +26,7 @@ mod jev;
 mod masking;
 mod mcp;
 mod metrics;
+mod rawstore;
 #[cfg(feature = "rewrite")]
 mod rewrite;
 mod router;
@@ -291,6 +292,11 @@ enum Commands {
     Abbreviations {
         #[command(subcommand)]
         action: AbbreviationsAction,
+    },
+    /// Print the full (secret-masked) output behind a filtered result
+    Show {
+        /// Id printed after filtered output ("Full output saved: ecotokens show <id>")
+        id: String,
     },
     /// Delete recorded interceptions (selective or total)
     Clear {
@@ -2915,6 +2921,31 @@ fn parse_older_than(s: &str) -> Option<chrono::Duration> {
     }
 }
 
+fn cmd_show(id: &str) {
+    let Some(dir) = rawstore::raw_dir() else {
+        eprintln!("ecotokens show: cannot locate the config directory");
+        std::process::exit(1);
+    };
+    match rawstore::load_from(&dir, id) {
+        Ok(text) => print!("{text}"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!("ecotokens show: no saved output for '{id}' (expired or never saved)");
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("ecotokens show: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn clear_saved_raw_outputs() {
+    if let Some(dir) = rawstore::raw_dir() {
+        let n = rawstore::clear_in(&dir);
+        println!("Deleted {n} saved raw output(s).");
+    }
+}
+
 fn cmd_clear(
     all: bool,
     before: Option<String>,
@@ -2948,6 +2979,11 @@ fn cmd_clear(
 
     if items.is_empty() {
         println!("No interceptions recorded.");
+        // Saved raw outputs outlive the interceptions they came from (a filtered
+        // `clear` removes only the latter), so `--all` must still sweep them.
+        if all {
+            clear_saved_raw_outputs();
+        }
         return;
     }
 
@@ -3059,7 +3095,13 @@ fn cmd_clear(
 
     let ids: Vec<String> = to_delete.into_iter().map(|i| i.id).collect();
     match delete_ids(&path, &ids) {
-        Ok(deleted) => println!("Deleted {deleted} interception(s)."),
+        Ok(deleted) => {
+            println!("Deleted {deleted} interception(s).");
+            // `--all` also drops the saved full outputs (`ecotokens show`).
+            if all {
+                clear_saved_raw_outputs();
+            }
+        }
         Err(e) => {
             eprintln!("Error writing metrics file: {e}");
             std::process::exit(1);
@@ -3773,6 +3815,7 @@ fn main() {
             project,
             yes,
         } => cmd_clear(all, before, older_than, family, project, yes),
+        Commands::Show { id } => cmd_show(&id),
         Commands::SessionStart => cmd_session_start(),
         Commands::SessionEnd => cmd_session_end(),
         Commands::Update { check } => cmd_update(check),
